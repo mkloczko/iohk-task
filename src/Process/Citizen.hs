@@ -73,14 +73,15 @@ loopCitizen chain = do
 -- | Entering grace period
 loopCitizenGrace :: Chain -> Process ()
 loopCitizenGrace chain = do 
-    _ <- receiveTimeout 50000 (
+    say "Citizen: Loop grace"
+    smth <- receiveTimeout 50000 (
       [ match (\(PropagateMsg n m t) -> do
-          say (concat ["Citizen: Msg ", show m, " from ", show n]) 
+          say (concat ["Citizen: Msg ", show m, " from ", show n, " - grace period"]) 
           case addNewMsg chain (m,t) of
             Just new_chain -> loopCitizenGrace new_chain
-            Nothing        -> do
-              say "Citizen: Printing"  
-              liftIO $ putStrLn (show chain) 
+            Nothing        -> loopCitizenGrace     chain
           )
       ]) 
-    return ()
+    case smth of 
+        Nothing -> liftIO (putStrLn $ show chain)
+        Just _  -> say "Citizen: This shouldn't happen"

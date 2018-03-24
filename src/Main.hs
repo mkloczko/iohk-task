@@ -20,12 +20,13 @@ import System.Environment (getArgs)
 import System.Random.MWC
 
 import Process
-
+import Config
 
 data CmdOptions = CmdOptions 
     { msg_time   :: Double
     , grace_time :: Double
     , seed       :: String
+    , conf_file  :: String
     } deriving (Show, Eq)
 
 parseCmdOptions = CmdOptions
@@ -43,6 +44,10 @@ parseCmdOptions = CmdOptions
                    ( long "with-seed"
                   <> help "Starting seed, in hex format" 
                   <> value "")
+               <*> strOption 
+                   ( long "conf"
+                  <> help "Cluster configuration for local nodes" 
+                  <> value "nodes.txt")
 
 main :: IO ()
 main = do
@@ -53,4 +58,4 @@ main = do
     case role of 
        "rng"    -> N.runProcess localNode (initSupervisor 3 2 (Just gen) backend)   
        "normal" -> N.runProcess localNode (initSupervisor 3 2 (Nothing) backend)   
-       _      -> return ()
+       _        -> return ()
