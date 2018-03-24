@@ -17,6 +17,7 @@ import Data.Bits (shiftR)
 
 import Data.Time.Clock.System
 import Unsafe.Coerce
+import Numeric
 
 instance Binary SystemTime where
     put (MkSystemTime secs nsecs) = put secs >> put nsecs
@@ -47,3 +48,5 @@ diffSysTime :: SystemTime -> SystemTime -> Double
 diffSysTime (MkSystemTime s1 ns1) (MkSystemTime s2 ns2)
     | ns1 >= ns2 = fromIntegral (s1-s2) + (fromIntegral (ns1 - ns2) / 1000000000) 
     | otherwise  = fromIntegral (s1-s2 -1) + (fromIntegral (1000000000 - (ns2 - ns1)) / 1000000000) 
+
+show2Float f = showFFloat (Just 2) f ""

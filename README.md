@@ -2,4 +2,4 @@
 
 # Configuration file
 
-The configuration file can be found at:
+The confugiration file is found at root directory: ```nodes.txt```

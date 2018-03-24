@@ -10,18 +10,21 @@ import Data.Time.Clock.System
 
 import Data.List
 import Data.Maybe
-
 import Msg
+import Scratchpad(show2Float)
+
+type NeighbourMap = Map ProcessId MonitorRef  
 
 -- | Look for other nodes at start
-sayHi :: Backend -> Process [(ProcessId, MonitorRef)] 
+sayHi :: Backend -> Process NeighbourMap 
 sayHi backend = do
     nodes <- liftIO $ findPeers backend 300000
     this_node <- getSelfNode
-    bracket (mapM monitorNode (nodes \\ [this_node])) (mapM unmonitor) $ \_ -> do
+    let other_nodes = nodes \\ [this_node]
+    bracket (mapM monitorNode other_nodes) (mapM unmonitor) $ \_ -> do
         my_pid <- getSelfPid
-        mapM (\n -> nsendRemote n "citizen" (HiMsg my_pid) ) nodes
-        catMaybes <$> catMaybes <$> replicateM (length nodes) (
+        mapM (\n -> nsendRemote n "citizen" (HiMsg my_pid) ) other_nodes
+        M.fromList <$> catMaybes <$> catMaybes <$> replicateM (length other_nodes) (
           receiveTimeout 100000
             [ match (\(ExistsMsg pid) -> Just <$> ((pid,) <$> monitor pid))
             , match (\(NodeMonitorNotification {}) -> return $ Nothing)
@@ -33,47 +36,62 @@ initLookout backend = do
     say "Lookout: Spawned"
     register "lookout" =<< getSelfPid
     other_lookouts <- sayHi backend
-    lookoutLoop backend ([] /= other_lookouts) other_lookouts
+    lookoutLoop backend (M.empty /= other_lookouts) other_lookouts
 
 
 lookoutLoop :: Backend 
             -> Bool    -- ^ Was connected in last iteration ?
-            -> [(ProcessId, MonitorRef)]
+            -> NeighbourMap
             -> Process () 
 -- When disconnecting, do not inform the citizen about it, for now.
-lookoutLoop backend _     []  = lookoutLoop backend False =<< lookoutLoopDisconnected backend
-lookoutLoop backend True  nbs = lookoutLoop backend True  =<< lookoutLoopConnected    nbs
-lookoutLoop backend False nbs = do
-    --Send message that we were disconnected to the citizen.
-    nsend "citizen" ReconnectedMsg 
-    lookoutLoop backend True  =<< lookoutLoopConnected nbs
+lookoutLoop backend was_connected nbs
+    | M.size nbs == 0 = lookoutLoop backend False =<< lookoutLoopDisconnected backend -- Was empty, disconnected behaviour
+    | was_connected   = lookoutLoop backend True  =<< lookoutLoopConnected    nbs     -- Was connected and still is
+    | otherwise       = do                                                            -- Was disconnected and is connected
+        --Send message that we were disconnected to the citizen.
+        nsend "citizen" ReconnectedMsg 
+        lookoutLoop backend True  =<< lookoutLoopConnected nbs
 
-lookoutLoopConnected :: [(ProcessId,MonitorRef)]  -- ^ Current neighbours 
-            -> Process [(ProcessId, MonitorRef)]
+checkIfLocal :: ProcessId
+             -> Process Bool
+checkIfLocal pid = (== processNodeId pid) <$> getSelfNode
+
+lookoutLoopConnected :: NeighbourMap         -- ^ Current neighbours 
+                     -> Process NeighbourMap 
 lookoutLoopConnected others = do
     new_others <- receiveWait (
       -- Peer discovery messages
-      [ match (\(HiMsg pid)     -> do
-          (:) <$> ((pid,) <$> monitor pid ) <*> pure others) -- exist response should be sent by citizen
-      , match (\(ExistsMsg pid) -> do
-          (:) <$> ((pid,) <$> monitor pid ) <*> pure others)
-      -- Task message handling
-      --, match (\(PropagateMsg n m t) -> do
-      --    say "Lookout: Received a msg to propagate"
-      --    nsend     "citizen" (FromLookoutMsg n m t)
-      --    return others)
+      [ match (\(ExistsMsg pid) -> do
+          is_local <- checkIfLocal pid
+          if is_local
+            then return others
+            else do
+              say $ concat ["Lookout: Found citizen at ", show pid]
+              M.insert pid <$> monitor pid <*> pure others
+          )
+      , match (\(HiMsg pid) -> do
+          is_local <- checkIfLocal pid
+          if is_local
+            then return others
+            else do
+              my_pid <- getSelfPid
+              nsendRemote (processNodeId pid) "citizen" (HiMsg pid)
+              return others
+          )
+      -- Task messages
       , match (\(PropagateMsg n m t) -> do
-          say "Lookout: Received a msg to propagate"
-          propagate (map fst others) (n,m,t) =<< getSelfNode
+          propagate (M.keys others) (n,m,t) =<< getSelfNode
           return others
           )
       -- Monitors
       , match (\(ProcessMonitorNotification ref pid _) -> do
-          return $ others \\ [(pid,ref)])
+          say $ concat ["Lookout: ", show pid, " disconnected"]
+          return $ M.delete pid others
+          )
       ])
     return new_others
 
-lookoutLoopDisconnected :: Backend -> Process [(ProcessId, MonitorRef)]
+lookoutLoopDisconnected :: Backend -> Process NeighbourMap
 lookoutLoopDisconnected backend = sayHi backend
     
 
@@ -81,8 +99,10 @@ propagate :: [ProcessId]
           -> (NodeId, Double, SystemTime) -- ^ Data from the other msg
           -> NodeId                       -- ^ Local node 
           -> Process ()
-propagate others (n, d, t) my_n = do
-    mapM_ (\p -> usend p (PropagateMsg my_n d t)) $ filter (\p -> processNodeId p /= n) others
+propagate others (n, d, t) my_n = mapM_ sender $ filter (\p -> processNodeId p /= n) others
+   where sender pid = do
+           say (concat ["Lookout: Sending ", show2Float d," from ", show n," to ", show pid])
+           usend pid (PropagateMsg my_n d t)
 
 -- [Monitoring other processes]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -20,6 +20,7 @@ import GHC.Generics
 import System.Random.MWC
 
 import Msg
+import Scratchpad(show2Float)
 
 -- | Process functionality related to generating new messages
 initRNG :: GenIO -> Process ()
@@ -30,7 +31,7 @@ initRNG gen_io = do
     
 loopRNG :: GenIO -> Process ()
 loopRNG gen_io = do
-    liftIO $ threadDelay 750000
+    liftIO $ threadDelay 500000
     d <- liftIO $ uniform gen_io
     t <- liftIO $ getSystemTime 
     n <- getSelfNode

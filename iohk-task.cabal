@@ -23,11 +23,12 @@ executable Task
                      , Process.Supervisor
                      , Process
                      , Msg
+                     , Config
                      , Scratchpad
   -- other-extensions:    
   build-depends:       base >=4.8 && <4.12, distributed-process, distributed-process-simplelocalnet,
                        binary, mwc-random, vector, time, cryptonite, bytestring, memory, containers,
-                       optparse-applicative, parsec
+                       optparse-applicative, parsec, async
   ghc-options:         -threaded
   hs-source-dirs:      src
   default-language:    Haskell2010
