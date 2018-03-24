@@ -12,10 +12,7 @@ import Data.Binary
 import Data.Time.Clock.System
 
 import GHC.Generics
-
-instance Binary SystemTime where
-    put (MkSystemTime secs nsecs) = put secs >> put nsecs
-    get = MkSystemTime <$> get <*> get
+import Scratchpad () -- import Binary SystemTime instance
 
 data ExistsMsg = ExistsMsg  {-#UNPACK#-} !ProcessId
                 deriving (Generic, Binary, Show)
@@ -41,5 +38,5 @@ data PrintMsg       = PrintMsg
 data Msg = Msg {
       val  :: Double
     , time :: SystemTime
-    , hash :: Digest SHA256
+--    , hash :: Digest SHA256
 } deriving (Show, Eq, Ord)

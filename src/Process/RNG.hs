@@ -44,9 +44,9 @@ loopRNG gen_io = do
 --
 -- A process might get killed, exited, disconnected, etc.
 -- One way to increase reliability is to store the chain locally.
--- Other, complementary is to request data from other nodes.
+-- Other, complementary way is to request data from other nodes.
 --
--- Killing, turning off the node -> Storing chain locally, request data from other nodes.
+-- Killing, turning off the node -> Storing the chain locally, request data from other nodes.
 -- (use hashes?)
 -- Temporary disconnections
 -- 

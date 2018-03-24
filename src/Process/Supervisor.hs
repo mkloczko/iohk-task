@@ -14,6 +14,7 @@ import Process.Lookout (initLookout)
 import Process.RNG (initRNG)
 
 import Msg
+import Scratchpad (diffSysTime)
 -- | Spawns a process, links a child to parent, parent monitors the child.
 spawnLocalSupervised :: Process () -> Process (ProcessId, MonitorRef)
 spawnLocalSupervised p = do
@@ -33,10 +34,6 @@ timer todo start_t dt = do
         then todo
         else timer todo start_t dt
 
-diffSysTime :: SystemTime -> SystemTime -> Double
-diffSysTime (MkSystemTime s1 ns1) (MkSystemTime s2 ns2)
-    | ns1 >= ns2 = fromIntegral (s1-s2) + (fromIntegral (ns1 - ns2) / 1000000000) 
-    | otherwise  = fromIntegral (s1-s2 -1) + (fromIntegral (1000000000 - (ns2 - ns1)) / 1000000000) 
 
 
 
