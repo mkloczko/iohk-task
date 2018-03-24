@@ -8,41 +8,79 @@ import Msg
 data Chain = Chain [(Double, SystemTime)]
            deriving (Show)
 
-data Response = PropMessage NodeId Double SystemTime
-              | Print 
-              | Exit
-              | None
-              deriving (Show)
 
 -- | Propagates and sends messages further
 initCitizen :: Process ()
 initCitizen = do
     say "Citizen: Spawned"
     register "citizen" =<< getSelfPid
+    nsend "lookout" =<< (RequestPrevious <$> liftIO getSystemTime <*> getSelfPid)
     loopCitizen (Chain [])
-    -- chain <- requestData
 
-chainNewMsg :: Chain
-            -> (NodeId, Double, SystemTime)
-            -> Process (Chain, Response)
-chainNewMsg (Chain lst) (n,d,t) = do
+
+
+addNewMsg :: Chain
+            -> (Double, SystemTime)
+            -> Maybe Chain
+addNewMsg (Chain lst) (d,t) = do
     -- Try to insert into the chain.
     -- If already in, there is no response.
-    -- When an alement is equal to another -> same 
+    -- When an element is equal to another -> same 
     -- SEND HASHES!
     if (d,t) `elem` lst
-        then return (Chain        lst , None)
-        else return (Chain ((d,t):lst), PropMessage n d t)
+        then Nothing
+        else Just $ Chain ((d,t):lst)
     
+mergeMsgs :: Chain 
+          -> [(Double, SystemTime)]
+          -> Chain
+mergeMsgs chain []   = chain
+mergeMsgs chain msgs = chain -- TODO
 
 loopCitizen :: Chain -> Process ()
 loopCitizen chain = do
-    (new_chain, response) <- receiveWait (
-      [ match (\(FromLookoutMsg n m t) -> say ("Citizen: Received a message from lookout " ++ show m) >> chainNewMsg chain (n,m,t) )
-      , match (\(PrintMsg            ) -> say "Citizen: Received a print request" >> return (chain, Print)     )
+    receiveWait (
+      [ match (\(PropagateMsg n m t) -> do
+          say (concat ["Citizen: Msg ", show m, " from ", show n]) 
+          case addNewMsg chain (m,t) of 
+              Just new_chain -> do
+                nsend "lookout" (PropagateMsg n m t)      
+                loopCitizen new_chain
+              Nothing        -> loopCitizen     chain 
+          )
+      , match (\(PrintMsg            ) -> do
+          say "Citizen: Received a print request" 
+          loopCitizenGrace chain
+          )
+      , match (\(HiMsg pid) -> do 
+          say ("Citizen: Discovered by " ++ show pid)
+          nsend "lookout" (HiMsg pid)
+          usend pid =<< (ExistsMsg <$> getSelfPid)
+          loopCitizen chain
+          )
+      , match (\(ReconnectedMsg) -> do 
+          say ("Citizen: Requesting previous messages")
+          nsend "lookout" =<< (RequestPrevious <$> liftIO getSystemTime <*> getSelfPid)
+          loopCitizen chain
+          )
+      , match (\(PreviousMsgs _ msgs pid) -> do 
+          say (concat ["Citizen: Received previous msgs from ", show pid])
+          nsend "lookout" =<< (RequestPrevious <$> liftIO getSystemTime <*> getSelfPid)
+          loopCitizen chain
+          )
       ])
-    case response of 
-        PropMessage n m t -> nsend "lookout" (ToLookoutMsg n m t) >> loopCitizen new_chain
-        Print             -> liftIO $ putStrLn (show chain) 
-        None              -> loopCitizen new_chain
 
+-- | Entering grace period
+loopCitizenGrace :: Chain -> Process ()
+loopCitizenGrace chain = do 
+    _ <- receiveTimeout 50000 (
+      [ match (\(PropagateMsg n m t) -> do
+          say (concat ["Citizen: Msg ", show m, " from ", show n]) 
+          case addNewMsg chain (m,t) of
+            Just new_chain -> loopCitizenGrace new_chain
+            Nothing        -> do
+              say "Citizen: Printing"  
+              liftIO $ putStrLn (show chain) 
+          )
+      ]) 
+    return ()

@@ -15,6 +15,7 @@ import Process.RNG (initRNG)
 
 import Msg
 import Scratchpad (diffSysTime)
+
 -- | Spawns a process, links a child to parent, parent monitors the child.
 spawnLocalSupervised :: Process () -> Process (ProcessId, MonitorRef)
 spawnLocalSupervised p = do
@@ -23,6 +24,7 @@ spawnLocalSupervised p = do
     monitor_ref    <- monitor child_pid
     return (child_pid, monitor_ref)
 
+-- | Timer process behaviour
 timer :: Process () -- ^ What to do when time runs out.
       -> SystemTime -- ^ Start time
       -> Double     -- ^ Delta time

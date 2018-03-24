@@ -30,12 +30,12 @@ initRNG gen_io = do
     
 loopRNG :: GenIO -> Process ()
 loopRNG gen_io = do
-    liftIO $ threadDelay 5000
+    liftIO $ threadDelay 750000
     d <- liftIO $ uniform gen_io
     t <- liftIO $ getSystemTime 
     n <- getSelfNode
     say $ concat ["RNG: Generated new value ", show d]
-    nsend "lookout" (PropagateMsg n d t) 
+    nsend "citizen" (PropagateMsg n d t) 
     loopRNG gen_io
 
 

@@ -23,10 +23,28 @@ data HiMsg     = HiMsg      {-#UNPACK#-} !ProcessId
 data RNGMsg = PropagateMsg {-#UNPACK#-}!NodeId {-#UNPACK#-}!Double {-#UNPACK#-}!SystemTime 
             deriving (Generic, Binary, Show)
 
-data ToLookoutMsg   = ToLookoutMsg   NodeId Double SystemTime
-                       deriving (Generic, Binary, Show)
-data FromLookoutMsg = FromLookoutMsg NodeId Double SystemTime
-                       deriving (Generic, Binary, Show)
+-- | Disconnected message
+data DisconnectedMsg = DisconnectedMsg 
+                       deriving (Generic,Binary,Show)
+
+-- | Reconnected message
+data ReconnectedMsg = ReconnectedMsg 
+                       deriving (Generic,Binary,Show)
+-- | Connected message
+data ConnectedMsg = ConnectedMsg 
+                       deriving (Generic,Binary,Show)
+-- | Request all messages before
+data RequestPrevious = RequestPrevious {-#UNPACK#-}!SystemTime {-#UNPACK#-}!ProcessId 
+                        deriving (Generic, Binary, Show)
+
+-- | Request between first system time and second system time
+data RequestBetween  = RequestBetween {-#UNPACK #-}!SystemTime {-#UNPACK#-}!SystemTime {-#UNPACK#-}!ProcessId 
+                        deriving (Generic, Binary, Show)
+
+-- | Previous msgs, sent to be synchronised. Bool says whether it is the whole requested package.
+data PreviousMsgs    = PreviousMsgs {-#UNPACK#-}!Bool [(Double, SystemTime)] {-#UNPACK#-}!ProcessId
+                        deriving (Generic, Binary, Show)
+
 
 -- | Communicating that a process exited due to time running out. 
 data TimerMsg = TimerMsg !ProcessId
