@@ -67,6 +67,20 @@ data State = State
   , parts_of_chains :: Seq Chain -- ^ Parts of chains that are not validated
   } deriving (Show, Eq, Generic, Binary)
 
+
+requestedMsgs (State (Chain msgs _) _) (Just t_from) t_to my_pid = do
+    let to_send = SQ.filter ((\t -> t >= t_from && t <= t_to).msgTime) msgs 
+        is_all  = case SQ.viewl msgs of
+          EmptyL     -> False
+          (m :< rst) -> (msgTime m) < t_to
+    PreviousMsgs (is_all || t_from > t_to) (toList to_send) my_pid
+requestedMsgs (State (Chain msgs _) _)  Nothing t_to my_pid = do
+    let to_send = SQ.filter ((\t -> t <= t_to).msgTime) msgs 
+        is_all  = case SQ.viewl msgs of
+          EmptyL     -> False
+          (m :< rst) -> (msgTime m) < t_to
+    PreviousMsgs is_all (toList to_send) my_pid
+
 lastValidMsgTime :: State
                  -> Maybe SystemTime
 lastValidMsgTime (State (Chain msgs _) _) 
@@ -89,6 +103,7 @@ mergeChains :: State
             -> WhichChain -- ^ Bottom chain
             -> Maybe State
 mergeChains st                  msg None           None           = Nothing
+mergeChains st                  msg New            None           = Nothing
 mergeChains st                  msg None           New            = Nothing
 mergeChains (State valid parts) msg New            New            = Just $ State valid (newChain msg <| parts)
 mergeChains (State valid parts) msg Valid          (NotValid ix)  = Just $ State (unsafeMergeChains (SQ.index parts ix) msg valid) (SQ.deleteAt ix parts)
@@ -98,7 +113,7 @@ mergeChains (State valid parts) msg Valid          New            = Just $ State
 mergeChains (State valid parts) msg _              (NotValid ix)  = Just $ State valid (SQ.adjust' (unsafeAddMsgBtm msg) ix parts) 
 mergeChains (State valid parts) msg (NotValid ix)  _              = Just $ State valid (SQ.adjust' (unsafeAddMsgTop msg) ix parts) 
 mergeChains (State valid parts) msg _              (Valid)        = error "mergeChains: Valid chain cannot be glued from the bottom"
-mergeChains (State valid parts) msg a              b              = error $ concat ["mergeChains: Unsupported case. ", show a, " ", show b]    
+-- mergeChains (State valid parts) msg a              b              = error $ concat ["mergeChains: Unsupported case. ", show a, " ", show b]    
 -- | Add a new message to the state
 addMsgState :: Msg
             -> State
@@ -166,12 +181,15 @@ msgChainBtm (Chain sq st) msg ix
     
     
 
-saveCitizen :: String -> State -> IO ()
-saveCitizen str st = encodeFile str st
+saveCitizen :: String -> State -> Process ()
+saveCitizen str st = do 
+  say $ "Citizen: Saving file"
+  liftIO $ encodeFile str st
 
-loadCitizen :: String -> IO (Maybe State)
+loadCitizen :: String -> Process (Maybe State)
 loadCitizen str = do
-  e_state <- decodeFileOrFail str
+  say $ "Citizen: Loading file"
+  e_state <- liftIO $ decodeFileOrFail str
   case e_state of
       Left err -> return Nothing
       Right st -> return $ Just st
@@ -184,7 +202,7 @@ initCitizen fname = do
     nid <- getSelfNode
     register "citizen" pid
 
-    m_st <- liftIO $ loadCitizen fname
+    m_st <- loadCitizen fname
     case m_st of 
       Nothing -> do
         say "Citizen: Starting with new state"
@@ -209,7 +227,7 @@ loopCitizen fname state = do
             Just new_state -> do
               say (concat ["Citizen: Msg ", show2Float (msgVal m), " from ", show n, " - propagating"]) 
               nsend "lookout" (PropagateMsg n m) 
-              liftIO $ saveCitizen fname new_state
+              saveCitizen fname new_state
               loopCitizen fname new_state
             Nothing        -> do
               say (concat ["Citizen: Msg ", show2Float (msgVal m), " from ", show n, " - already in"]) 
@@ -244,8 +262,20 @@ loopCitizen fname state = do
                case lastValidMsgTime new_state of
                  Just t_from -> nsend "lookout" $ RequestBetween  t_from t_to my_pid
                  Nothing     -> nsend "lookout" $ RequestPrevious        t_to my_pid
-          liftIO $ saveCitizen fname new_state
+          saveCitizen fname new_state
           loopCitizen fname new_state
+          )
+      , match (\(RequestPrevious t_to other_pid) -> do
+          (say.concat) ["Citizen: Fetched request from ", show other_pid, " for previous msgs up to", show other_pid]
+          my_pid <- getSelfPid 
+          usend other_pid (requestedMsgs state Nothing t_to my_pid)
+          loopCitizen fname state
+          )
+      , match (\(RequestBetween t_from t_to other_pid) -> do
+          (say.concat) ["Citizen: Fetched request from ", show other_pid, " for previous msgs from ", show t_from, " up to", show t_to]
+          my_pid <- getSelfPid 
+          usend other_pid (requestedMsgs state (Just t_from) t_to my_pid)
+          loopCitizen fname state
           )
       ])
 
@@ -258,7 +288,7 @@ loopCitizenGrace fname state = do
           case addMsgState m state of
             Just new_state -> do
               say (concat ["Citizen: Msg ", show2Float (msgVal m), " from ", show n, " - grace period"]) 
-              liftIO $ saveCitizen fname new_state
+              saveCitizen fname new_state
               loopCitizenGrace fname new_state
             Nothing        -> do
               say (concat ["Citizen: Msg ", show2Float (msgVal m), " from ", show n, " - grace period, already in"]) 
@@ -267,7 +297,7 @@ loopCitizenGrace fname state = do
       , match (\(PreviousMsgs _ msgs pid) -> do 
           say (concat ["Citizen: Received previous msgs from ", show pid, " - grace period"])
           let new_state = foldl' (\s m -> maybe s id (addMsgState m s)) state msgs 
-          liftIO $ saveCitizen fname new_state
+          saveCitizen fname new_state
           loopCitizenGrace fname new_state
           )
       ]) 

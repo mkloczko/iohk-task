@@ -101,6 +101,16 @@ lookoutLoopConnected others = do
           propagate (PropagateMsg my_nid m) logsay (filter (/=n) $ M.keys others) "citizen"
           return others
           )
+      , match (\req@(RequestPrevious t_to my_pid) -> do
+          let logsay = concat ["Sending request for messages up to ", show t_to]
+          propagate req logsay (M.keys others) "citizen"
+          return others
+          )
+      , match (\req@(RequestBetween t_from t_to my_pid) -> do
+          let logsay = concat ["Sending request for messages from ", show t_from, "up to ", show t_to]
+          propagate req logsay (M.keys others) "citizen"
+          return others
+          )
       -- Monitors
       , match (\(NodeMonitorNotification ref nid rsn) ->  do
           say $ concat ["Lookout: ", show nid, " disconnected. ", show rsn]
