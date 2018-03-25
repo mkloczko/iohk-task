@@ -48,7 +48,7 @@ data RequestBetween  = RequestBetween {-#UNPACK #-}!SystemTime {-#UNPACK#-}!Syst
                         deriving (Generic, Binary, Show)
 
 -- | Previous msgs, sent to be synchronised. Bool says whether it is the whole requested package.
-data PreviousMsgs    = PreviousMsgs {-#UNPACK#-}!Bool [Msg] {-#UNPACK#-}!ProcessId
+data PreviousMsgs    = PreviousMsgs !Bool [Msg] {-#UNPACK#-}!ProcessId
                         deriving (Generic, Binary, Show)
 
 

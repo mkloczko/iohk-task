@@ -83,8 +83,8 @@ newNode seed mt gt inter (Config host port role) = do
 
 opts = info (parseCmdOptions <**> helper) 
       ( fullDesc
-     <> progDesc "Simple program generating messages over a local network"
-     <> header "IOHK task"
+     <> progDesc "Simple program generating messages over a local network. The messages are collected and used to print out a score."
+     <> header "Simulate a network generating doubles over time."
       )
 
 main :: IO ()
