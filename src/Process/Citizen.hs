@@ -28,10 +28,15 @@ data Chain = Chain (Seq Msg) (Set ByteString)
 instance Show Chain where
   show (Chain sq st) = concat [show sq, " ", show $ S.size st]
 
-unsafeAddMsg :: Msg
+unsafeAddMsgTop :: Msg
              -> Chain
              -> Chain
-unsafeAddMsg msg (Chain sq st) = Chain (msg <| sq) ((msgHash msg) `S.insert` st) 
+unsafeAddMsgTop msg (Chain sq st) = Chain (msg <| sq) ((msgHash msg) `S.insert` st) 
+
+unsafeAddMsgBtm :: Msg
+             -> Chain
+             -> Chain
+unsafeAddMsgBtm msg (Chain sq st) = Chain (sq |> msg) ((msgHash msg) `S.insert` st) 
 
 unsafeMergeChains :: Chain
                   -> Msg
@@ -39,6 +44,10 @@ unsafeMergeChains :: Chain
                   -> Chain
 unsafeMergeChains (Chain sq1 st1) msg (Chain sq2 st2) = Chain (sq1 >< msg <| sq2) 
                                        (S.insert (msgHash msg) $ S.union st1 st2)
+
+newChain :: Msg
+         -> Chain
+newChain msg@(Msg v t h) = Chain (SQ.singleton msg) (S.singleton h)
 
 msgExists :: Msg   -- ^ Msg to check
           -> Chain -- ^ Chain
@@ -56,10 +65,12 @@ data State = State
   , parts_of_chains :: Seq Chain -- ^ Parts of chains that are not validated
   } deriving (Show, Eq)
 
+
 -- | Meta information for the algorithm
 data WhichChain = Valid
                 | NotValid Int
                 | None
+                | New
                 deriving (Show, Eq)
 
 mergeChains :: State 
@@ -68,12 +79,15 @@ mergeChains :: State
             -> WhichChain -- ^ Bottom chain
             -> Maybe State
 mergeChains st                  msg None           None           = Nothing
-mergeChains (State valid parts) msg Valid          None           = Just $ State (unsafeAddMsg msg valid) parts
-mergeChains (State valid parts) msg None           (NotValid ix)  = Just $ State valid (SQ.adjust' (unsafeAddMsg msg) ix parts) 
+mergeChains (State valid parts) msg New            New            = Just $ State valid (newChain msg <| parts)
 mergeChains (State valid parts) msg Valid          (NotValid ix)  = Just $ State (unsafeMergeChains (SQ.index parts ix) msg valid) (SQ.deleteAt ix parts)
-mergeChains (State valid parts) msg (NotValid ix1) (NotValid ix2) = Just $ State valid (SQ.deleteAt ix1 $ SQ.adjust' (unsafeMergeChains (SQ.index parts ix1) msg) ix2 parts )
-mergeChains (State valid parts) msg _              (Valid)        = error "Valid chain cannot be glued from the bottom"
-    
+mergeChains (State valid parts) msg (NotValid ix1) (NotValid ix2) = Just $ State valid (SQ.deleteAt ix2 $ SQ.adjust' (unsafeMergeChains (SQ.index parts ix2) msg) ix1 parts )
+mergeChains (State valid parts) msg Valid          None           = Just $ State (unsafeAddMsgTop msg valid) parts
+mergeChains (State valid parts) msg Valid          New            = Just $ State (unsafeAddMsgTop msg valid) parts
+mergeChains (State valid parts) msg _              (NotValid ix)  = Just $ State valid (SQ.adjust' (unsafeAddMsgBtm msg) ix parts) 
+mergeChains (State valid parts) msg (NotValid ix)  _              = Just $ State valid (SQ.adjust' (unsafeAddMsgTop msg) ix parts) 
+mergeChains (State valid parts) msg _              (Valid)        = error "mergeChains: Valid chain cannot be glued from the bottom"
+mergeChains (State valid parts) msg a              b              = error $ concat ["mergeChains: Unsupported case. ", show a, " ", show b]    
 -- | Add a new message to the state
 addMsgState :: Msg
             -> State
@@ -93,7 +107,10 @@ seekStateTop (State valid parts) msg = do
     let m_ixs  = Nothing : map Just [0..]
         chs    = valid : toList parts
         whichs = zipWith (\ch m_ix -> msgChainTop ch msg m_ix) chs m_ixs
-    maybe None id (find (/=None) whichs)
+    case filter (/= None) whichs of
+        [] -> None
+        ls -> maybe New id (find (/=New) ls) 
+
 
 -- | Msg can be glued to bottom to which chain
 seekStateBtm :: State
@@ -103,7 +120,11 @@ seekStateBtm (State valid parts) msg = do
     let ixs    = [0..]
         chs    = toList parts
         whichs = zipWith (\ch ix -> msgChainBtm ch msg ix) chs ixs
-    maybe None id (find (/=None) whichs)
+    case filter (/= None) whichs of
+        [] -> case whichs of
+          [] -> New
+          _  -> None
+        ls -> maybe New id (find (/=New) ls) 
 
 -- | Check whether the msgs adds to the top of the chain
 msgChainTop :: Chain
@@ -116,6 +137,7 @@ msgChainTop (Chain sq st) msg m_ix
     , isMsgNext msg (msgHash m) = case m_ix of
                           Just ix -> NotValid ix
                           Nothing -> Valid
+    | not $ S.member (msgHash msg) st = New
     | otherwise = None
 
 -- | Check whether the msg adds to the bottom of the non-valid chains 
@@ -127,6 +149,7 @@ msgChainBtm (Chain sq st) msg ix
     | not $ S.member (msgHash msg) st
     , (rst :> m) <- SQ.viewr sq
     , isMsgNext m (msgHash msg) = NotValid ix
+    | not $ S.member (msgHash msg) st = New
     | otherwise = None
 
     

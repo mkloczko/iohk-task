@@ -18,7 +18,7 @@ import System.Random.MWC
 
 import GHC.Generics
 
-import Scratchpad (encodeDouble) -- import Binary SystemTime instance
+import Scratchpad (show2Float, encodeDouble) -- import Binary SystemTime instance
 
 data ExistsMsg = ExistsMsg  {-#UNPACK#-} !ProcessId
                 deriving (Generic, Binary, Show)
@@ -68,7 +68,7 @@ data Msg = Msg {
 } deriving (Eq, Ord, Generic, Binary)
 
 instance Show Msg where
-    show msg = show $ msgVal msg
+    show msg = show2Float $ msgVal msg
 
 
 firstHashSeed :: ByteString

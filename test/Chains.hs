@@ -17,17 +17,11 @@ import Data.List
 import Test.Hspec
 import Test.QuickCheck
 
--- Generate a chain
--- Remove some messages
--- Add the removed messages to the chain
--- Have the whole chain again!
-
 
 instance {-#OVERLAPPING #-} Arbitrary [Msg] where
     arbitrary = do
         (v:vals)<- listOf1 (choose (0,1) :: Gen Double)
-        init_bs <- return firstHashSeed --pack <$> (arbitrary  :: Gen String)
-        let first_msg = Msg v (MkSystemTime 0 0) (hasher init_bs v)
+        let first_msg = Msg v (MkSystemTime 0 0) (hasher firstHashSeed v)
         return $ reverse $ scanl' (\(Msg v t h) nv -> Msg nv t (hasher h nv)) first_msg vals 
         
 
@@ -45,12 +39,6 @@ tests = do
               state_bad   = foldl' (\st m -> maybe st id (addMsgState m st)) state_empty left
               state_test  = foldl' (\st m -> maybe st id (addMsgState m st)) state_bad  taken_out
           
-          putStrLn $ show left
-          putStrLn $ show state_bad
-          putStrLn $ show taken_out
-          putStrLn $ show state_test
-          putStrLn ""
-
 
           state_test `shouldBe` state_ok)
 
