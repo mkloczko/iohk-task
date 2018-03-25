@@ -53,7 +53,7 @@ parseCmdOptions = CmdOptions
                <*> strOption 
                    ( long "conf"
                   <> help "Cluster configuration for local nodes" 
-                  <> value "nodes.txt")
+                  <> value "config/nodes.txt")
 
 
 -- | Convert a string into vector of word 32.

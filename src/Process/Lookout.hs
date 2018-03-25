@@ -45,9 +45,13 @@ lookoutLoop :: Backend
             -> Process () 
 -- When disconnecting, do not inform the citizen about it, for now.
 lookoutLoop backend was_connected nbs
-    | M.size nbs == 0 = lookoutLoop backend False =<< lookoutLoopDisconnected backend -- Was empty, disconnected behaviour
+    | M.size nbs == 0
+    , was_connected   = do
+        say "Lookout: Disconnected"
+        lookoutLoop backend False =<< lookoutLoopDisconnected backend                 -- Was connected, disconnected behaviour
+    | M.size nbs == 0 = lookoutLoop backend False =<< lookoutLoopDisconnected backend -- Was disconnected and still is
     | was_connected   = lookoutLoop backend True  =<< lookoutLoopConnected    nbs     -- Was connected and still is
-    | otherwise       = do                                                            -- Was disconnected and is connected
+    | otherwise       = do                                                            -- Was disconnected, connected behaviour
         --Send message that we were disconnected to the citizen.
         nsend "citizen" ReconnectedMsg 
         lookoutLoop backend True  =<< lookoutLoopConnected nbs
@@ -79,8 +83,8 @@ lookoutLoopConnected others = do
               return others
           )
       -- Task messages
-      , match (\(PropagateMsg n m t) -> do
-          propagate (M.keys others) (n,m,t) =<< getSelfNode
+      , match (\(PropagateMsg n m) -> do
+          propagate (M.keys others) (n,m) =<< getSelfNode
           return others
           )
       -- Monitors
@@ -96,13 +100,13 @@ lookoutLoopDisconnected backend = sayHi backend
     
 
 propagate :: [ProcessId]
-          -> (NodeId, Double, SystemTime) -- ^ Data from the other msg
-          -> NodeId                       -- ^ Local node 
+          -> (NodeId, Msg) -- ^ Data from the other msg
+          -> NodeId        -- ^ Local node 
           -> Process ()
-propagate others (n, d, t) my_n = mapM_ sender $ filter (\p -> processNodeId p /= n) others
+propagate others (n, m) my_n = mapM_ sender $ filter (\p -> processNodeId p /= n) others
    where sender pid = do
-           say (concat ["Lookout: Sending ", show2Float d," from ", show n," to ", show pid])
-           usend pid (PropagateMsg my_n d t)
+           say (concat ["Lookout: Sending ", show2Float (msgVal m)," from ", show n," to ", show pid])
+           usend pid (PropagateMsg my_n m)
 
 -- [Monitoring other processes]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~

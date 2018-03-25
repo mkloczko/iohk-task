@@ -27,17 +27,28 @@ initRNG :: GenIO -> Process ()
 initRNG gen_io = do
     say "RNG: Spawned"
     register "rng" =<< getSelfPid 
-    loopRNG gen_io
+    -- Generate first msg
+    msg <- liftIO$ firstMsg gen_io
+    n   <- getSelfNode 
+    -- Send first msg
+    say $ concat ["RNG: Generated first value ", show2Float (msgVal msg)]
+    nsend "citizen" (PropagateMsg n msg) 
+    -- Loop
+    loopRNG msg gen_io
     
-loopRNG :: GenIO -> Process ()
-loopRNG gen_io = do
+loopRNG :: Msg        -- ^ Last message
+        -> GenIO 
+        -> Process ()
+loopRNG msg gen_io = do
     liftIO $ threadDelay 500000
-    d <- liftIO $ uniform gen_io
-    t <- liftIO $ getSystemTime 
-    n <- getSelfNode
-    say $ concat ["RNG: Generated new value ", show d]
-    nsend "citizen" (PropagateMsg n d t) 
-    loopRNG gen_io
+    -- Generate msg
+    new_msg <- liftIO$ generateMsg gen_io msg
+    n   <- getSelfNode
+    -- Send msg
+    say $ concat ["RNG: Generated new value ", show2Float (msgVal new_msg)]
+    nsend "citizen" (PropagateMsg n new_msg) 
+    -- loop
+    loopRNG new_msg gen_io
 
 
 -- [Requesting data]
