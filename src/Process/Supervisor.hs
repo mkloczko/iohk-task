@@ -37,6 +37,11 @@ timer todo start_t dt = do
         else timer todo start_t dt
 
 
+data SupervisorKit = SupervisorKit 
+  { rng_interval :: Word
+  , m_gen        :: Maybe GenIO
+  , backend_kit  :: Backend
+  } 
 
 
 -- | Supervisor node - counts down the timers,
@@ -48,6 +53,7 @@ initSupervisor :: Double -- ^ Messaging time
                -> Backend
                -> Process ()
 initSupervisor msg_dt grace_dt rng_inter m_gen_io backend = do
+    let kit = SupervisorKit rng_inter m_gen_io backend
     say "Supervisor: Spawned"
     pid <- getSelfPid
     lookout_pidref <- spawnLocalSupervised (initLookout backend)
@@ -59,12 +65,12 @@ initSupervisor msg_dt grace_dt rng_inter m_gen_io backend = do
     say "Supervisor: Starting messaging period"
     msg_start_t   <- liftIO $ getSystemTime
     msg_timer_pid <- spawnLocal $ timer (send pid =<< (TimerMsg <$> getSelfPid) ) msg_start_t msg_dt 
-    messagingPeriod msg_timer_pid lookout_pidref citizen_pidref m_rng_pidref
+    messagingPeriod kit msg_timer_pid lookout_pidref citizen_pidref m_rng_pidref
     -- Grace period
     say "Supervisor: Starting grace period"
     grace_start_t    <- liftIO $ getSystemTime
     grace_timer_pid  <- spawnLocal $ timer (send pid =<< (TimerMsg <$> getSelfPid) ) grace_start_t grace_dt 
-    citizen_finished <- gracePeriod grace_timer_pid citizen_pidref
+    citizen_finished <- gracePeriod kit grace_timer_pid citizen_pidref
     -- End
     if citizen_finished 
       then say "Supervisor: Citizen finished gracefully"
@@ -76,9 +82,19 @@ initSupervisor msg_dt grace_dt rng_inter m_gen_io backend = do
 
     
 -- | Check whether all children are working - if not, restart.
-messagingPeriod timer_pid lookout_pidref citizen_pidref m_rng_pidref = do
+messagingPeriod kit timer_pid lookout_pidref citizen_pidref m_rng_pidref = do
     todo <- receiveWait 
       [ matchIf (\(TimerMsg pid) -> pid == timer_pid) (\_ -> return 0)
+      , match   (\(ProcessMonitorNotification ref pid rsn) -> do
+          let is_lookout = (pid == fst lookout_pidref)
+              is_citizen = (pid == fst citizen_pidref)
+              m_is_rng   = (pid ==).fst <$> m_rng_pidref
+          case (is_lookout, is_citizen, m_is_rng) of
+              (True,_,_)      -> (say.concat) ["Supervisor: Lookout died - ", show rsn] >> return 1
+              (_,True,_)      -> (say.concat) ["Supervisor: Citizen died - ", show rsn] >> return 2
+              (_,_,Just True) -> (say.concat) ["Supervisor: RNG died - "    , show rsn] >> return 3
+              _               -> (say.concat) ["Supervisor: Unknown process died"]      >> return (-1)
+        )
       ]
     case todo of
         0 -> do
@@ -86,15 +102,35 @@ messagingPeriod timer_pid lookout_pidref citizen_pidref m_rng_pidref = do
             mapM_ (\(pid,ref) -> unmonitor ref >> exit pid "Entering grace period") to_exit
             -- Request printing from citizen
             send (fst citizen_pidref) PrintMsg
-        _ -> messagingPeriod timer_pid lookout_pidref citizen_pidref m_rng_pidref
+        1 -> do
+          new_lookout <- spawnLocalSupervised (initLookout $ backend_kit kit)
+          messagingPeriod kit timer_pid new_lookout citizen_pidref m_rng_pidref
+        2 -> do
+          new_citizen <- spawnLocalSupervised initCitizen
+          messagingPeriod kit timer_pid lookout_pidref new_citizen m_rng_pidref
+        3 -> do
+          new_rng <- case m_gen kit of 
+            Just gen -> Just <$> spawnLocalSupervised (initRNG gen (rng_interval kit))
+            Nothing  -> say "Supervisor: Could not respawn RNG process due to lack of rng generator." 
+                      >> return Nothing 
+          messagingPeriod kit timer_pid lookout_pidref citizen_pidref new_rng
+        _ -> messagingPeriod kit timer_pid lookout_pidref citizen_pidref m_rng_pidref
 
 -- | Check whenever citizen is working. Do not restart if failed. 
-gracePeriod timer_pid citizen_pidref = do
+gracePeriod kit timer_pid citizen_pidref = do
     todo <- receiveWait 
       [ matchIf (\(TimerMsg pid) -> pid == timer_pid) (\_ -> return 0)
-      , matchIf (\(ProcessMonitorNotification _ pid reason) -> pid == (fst citizen_pidref) && reason == DiedNormal) (\_ -> return 1)
+      , matchIf (\(ProcessMonitorNotification _ pid reason) -> pid == (fst citizen_pidref)) (\not -> do
+          let (ProcessMonitorNotification r p rsn) = not
+          case rsn of
+              DiedNormal -> return 1
+              _          -> (say.concat) ["Supervisor: Citizen died during grace period ", show rsn] >> return 2
+        )
       ]
     case todo of
         0 -> return False
         1 -> return True
-        _ -> gracePeriod timer_pid citizen_pidref
+        2 -> do
+          new_citizen <- spawnLocalSupervised initCitizen
+          gracePeriod kit timer_pid new_citizen
+        _ -> gracePeriod kit timer_pid citizen_pidref
