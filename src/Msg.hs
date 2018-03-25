@@ -20,9 +20,9 @@ import GHC.Generics
 
 import Scratchpad (show2Float, encodeDouble) -- import Binary SystemTime instance
 
-data ExistsMsg = ExistsMsg  {-#UNPACK#-} !ProcessId
+data ExistsMsg = ExistsMsg  {-#UNPACK#-} !NodeId
                 deriving (Generic, Binary, Show)
-data HiMsg     = HiMsg      {-#UNPACK#-} !ProcessId
+data HiMsg     = HiMsg      {-#UNPACK#-} !NodeId
                 deriving (Generic, Binary, Show)
 
 

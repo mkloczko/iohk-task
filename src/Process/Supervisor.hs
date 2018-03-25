@@ -43,16 +43,17 @@ timer todo start_t dt = do
 -- sends meta-commands and makes sure everything is running.
 initSupervisor :: Double -- ^ Messaging time
                -> Double -- ^ Grace period
+               -> Word   -- ^ RNG interval time
                -> Maybe GenIO -- ^ Seed, if supplied
                -> Backend
                -> Process ()
-initSupervisor msg_dt grace_dt m_gen_io backend = do
+initSupervisor msg_dt grace_dt rng_inter m_gen_io backend = do
     say "Supervisor: Spawned"
     pid <- getSelfPid
     lookout_pidref <- spawnLocalSupervised (initLookout backend)
     citizen_pidref <- spawnLocalSupervised  initCitizen
     m_rng_pidref   <- case m_gen_io of
-        Just gen_io -> Just <$> spawnLocalSupervised (initRNG gen_io)
+        Just gen_io -> Just <$> spawnLocalSupervised (initRNG gen_io rng_inter)
         Nothing     -> return Nothing
     -- Messaging period
     say "Supervisor: Starting messaging period"

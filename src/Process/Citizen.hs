@@ -65,6 +65,14 @@ data State = State
   , parts_of_chains :: Seq Chain -- ^ Parts of chains that are not validated
   } deriving (Show, Eq)
 
+lastValidMsgTime :: State
+                 -> Maybe SystemTime
+lastValidMsgTime (State (Chain msgs _) _) 
+    | EmptyL     <- SQ.viewl msgs 
+    = Nothing
+    | ((Msg _ t _) :< rst) <- SQ.viewl msgs 
+    = Just t
+
 
 -- | Meta information for the algorithm
 data WhichChain = Valid
@@ -79,6 +87,7 @@ mergeChains :: State
             -> WhichChain -- ^ Bottom chain
             -> Maybe State
 mergeChains st                  msg None           None           = Nothing
+mergeChains st                  msg None           New            = Nothing
 mergeChains (State valid parts) msg New            New            = Just $ State valid (newChain msg <| parts)
 mergeChains (State valid parts) msg Valid          (NotValid ix)  = Just $ State (unsafeMergeChains (SQ.index parts ix) msg valid) (SQ.deleteAt ix parts)
 mergeChains (State valid parts) msg (NotValid ix1) (NotValid ix2) = Just $ State valid (SQ.deleteAt ix2 $ SQ.adjust' (unsafeMergeChains (SQ.index parts ix2) msg) ix1 parts )
@@ -183,28 +192,39 @@ loopCitizen state = do
           say "Citizen: Received a print request" 
           loopCitizenGrace state
           )
-      , match (\(HiMsg pid) -> do 
-          say (concat ["Citizen: Discovered by ", show pid])
-          usend pid =<< (ExistsMsg <$> getSelfPid)
-          nsend "lookout" (HiMsg pid)
+      , match (\(HiMsg nid) -> do 
+          say (concat ["Citizen: Discovered by ", show nid])
+          nsend "lookout" (HiMsg nid)
           loopCitizen state
           )
       , match (\(ReconnectedMsg) -> do 
           say ("Citizen: Requesting previous messages")
-          nsend "lookout" =<< (RequestPrevious <$> liftIO getSystemTime <*> getSelfPid)
+          t_to   <- liftIO $ getSystemTime 
+          my_pid <- getSelfPid 
+          case lastValidMsgTime state of
+            Just t_from -> nsend "lookout" $ RequestBetween  t_from t_to my_pid
+            Nothing     -> nsend "lookout" $ RequestPrevious        t_to my_pid
           loopCitizen state
           )
-      , match (\(PreviousMsgs _ msgs pid) -> do 
+      , match (\(PreviousMsgs all msgs pid) -> do 
           say (concat ["Citizen: Received previous msgs from ", show pid])
           let new_state = foldl' (\s m -> maybe s id (addMsgState m s)) state msgs 
+          if all 
+             then return ()
+             else do 
+               t_to   <- liftIO $ getSystemTime
+               my_pid <- getSelfPid
+               case lastValidMsgTime new_state of
+                 Just t_from -> nsend "lookout" $ RequestBetween  t_from t_to my_pid
+                 Nothing     -> nsend "lookout" $ RequestPrevious        t_to my_pid
           loopCitizen new_state
           )
       ])
 
+
 -- | Entering grace period
 loopCitizenGrace :: State -> Process ()
 loopCitizenGrace state = do 
-    say "Citizen: Loop grace"
     smth <- receiveTimeout 50000 (
       [ match (\(PropagateMsg n m) -> do
           case addMsgState m state of
@@ -222,12 +242,17 @@ loopCitizenGrace state = do
           )
       ]) 
     case smth of 
-        Nothing -> liftIO $ printTask state
-        Just _  -> say "Citizen: This shouldn't happen"
+        Nothing -> printTask state
+        Just _  -> return () -- Shouldn't happen because we are supposed to loop until there are no messages
 
 
 -- | Printing the task result.
-printTask :: State -> IO ()
-printTask (State (Chain sq st) _) = print (size, the_sum)
+showTask :: State -> String
+showTask (State (Chain sq st) _) = show (size, the_sum)
   where the_sum = foldl' (\s (val, ix) -> s + ix*val) 0 $ zip (reverse $ map msgVal (toList sq)) [1..]
         size    = SQ.length sq
+
+printTask :: State -> Process ()
+printTask state = do 
+   nid <- getSelfNode
+   liftIO $ putStrLn $ concat [show nid,": " ,showTask state]

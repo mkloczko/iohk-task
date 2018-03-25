@@ -32,6 +32,7 @@ data CmdOptions = CmdOptions
     { msg_time   :: Double
     , grace_time :: Double
     , seed       :: String
+    , spawn_speed:: Word
     , conf_file  :: String
     } deriving (Show, Eq)
 
@@ -50,6 +51,10 @@ parseCmdOptions = CmdOptions
                    ( long "with-seed"
                   <> help "RNG seed, up to 256 elements will be used" 
                   <> value "")
+               <*> option auto
+                   ( long "rng-interval"
+                  <> help "Time between generating new msgs, in microseconds."
+                  <> value 750000)
                <*> strOption 
                    ( long "conf"
                   <> help "Cluster configuration for local nodes" 
@@ -62,17 +67,19 @@ strToSeed :: String -> U.Vector Word32
 strToSeed str = U.fromList $ map unsafeCoerce str
 
 -- | Create a new node and spawn a superivor process for a given role
-newNode :: GenIO  -- ^
+newNode :: U.Vector Word32 -- ^ seed
         -> Double
         -> Double
+        -> Word            -- ^ Interval
         -> Config
         -> IO ()
-newNode gen_io mt gt (Config host port role) = do
+newNode seed mt gt inter (Config host port role) = do
     backend   <- initializeBackend host port N.initRemoteTable
     localNode <- newLocalNode backend
+    gen_io <- initialize seed
     case role of 
-        Generator -> N.runProcess localNode (initSupervisor mt gt (Just gen_io) backend)   
-        Normal    -> N.runProcess localNode (initSupervisor mt gt (Nothing    ) backend)   
+        Generator -> N.runProcess localNode (initSupervisor mt gt inter (Just gen_io) backend)   
+        Normal    -> N.runProcess localNode (initSupervisor mt gt inter (Nothing    ) backend)   
 
 opts = info (parseCmdOptions <**> helper) 
       ( fullDesc
@@ -82,13 +89,12 @@ opts = info (parseCmdOptions <**> helper)
 
 main :: IO ()
 main = do
-    (CmdOptions mt gt seed nds_cfg) <- execParser opts
+    (CmdOptions mt gt seed inter nds_cfg) <- execParser opts
     nodes <- readConfigFile nds_cfg
-    gen <- initialize (strToSeed seed)
     -- Set stderr and stdout buffering...
     hSetBuffering stderr LineBuffering
     hSetBuffering stdout LineBuffering 
     -- Spawn nodes asynchronously.
-    asyncs <- mapM (asyncBound.newNode gen mt gt) nodes
+    asyncs <- mapM (asyncBound.newNode (strToSeed seed) mt gt inter) nodes
     mapM_ wait asyncs
     threadDelay 3000000

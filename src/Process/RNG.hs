@@ -23,8 +23,8 @@ import Msg
 import Scratchpad(show2Float)
 
 -- | Process functionality related to generating new messages
-initRNG :: GenIO -> Process ()
-initRNG gen_io = do
+initRNG :: GenIO -> Word ->  Process ()
+initRNG gen_io inter = do
     say "RNG: Spawned"
     register "rng" =<< getSelfPid 
     -- Generate first msg
@@ -34,13 +34,14 @@ initRNG gen_io = do
     say $ concat ["RNG: Generated first value ", show2Float (msgVal msg)]
     nsend "citizen" (PropagateMsg n msg) 
     -- Loop
-    loopRNG msg gen_io
+    loopRNG msg gen_io (fromIntegral inter)
     
 loopRNG :: Msg        -- ^ Last message
         -> GenIO 
+        -> Int        -- ^ Interval for msg generation
         -> Process ()
-loopRNG msg gen_io = do
-    liftIO $ threadDelay 500000
+loopRNG msg gen_io inter = do
+    liftIO $ threadDelay inter
     -- Generate msg
     new_msg <- liftIO$ generateMsg gen_io msg
     n   <- getSelfNode
@@ -48,7 +49,7 @@ loopRNG msg gen_io = do
     say $ concat ["RNG: Generated new value ", show2Float (msgVal new_msg)]
     nsend "citizen" (PropagateMsg n new_msg) 
     -- loop
-    loopRNG new_msg gen_io
+    loopRNG new_msg gen_io inter
 
 
 -- [Requesting data]
