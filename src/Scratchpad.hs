@@ -19,6 +19,7 @@ import Data.Time.Clock.System
 import Unsafe.Coerce
 import Numeric
 
+
 instance Binary SystemTime where
     put (MkSystemTime secs nsecs) = put secs >> put nsecs
     get = MkSystemTime <$> get <*> get

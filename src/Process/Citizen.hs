@@ -12,8 +12,10 @@ import qualified Data.Set      as S
 
 import Data.Binary
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
 import Data.Foldable
 import Data.Maybe (fromJust)
+import Control.Exception (try)
 import GHC.Generics
 
 import Msg
@@ -23,7 +25,7 @@ import Scratchpad(show2Float)
 -- | (Not too big) chain, defined as sequence of msgs.
 -- Set of bytestrings says which hashes are in - assuming no collisions.
 data Chain = Chain (Seq Msg) (Set ByteString)
-    deriving (Eq)
+    deriving (Eq, Generic, Binary)
 
 instance Show Chain where
   show (Chain sq st) = concat [show sq, " ", show $ S.size st]
@@ -63,7 +65,7 @@ isMsgNext msg h = (msgHash msg) == (hasher h (msgVal msg))
 data State = State
   { valid_chain     ::     Chain                
   , parts_of_chains :: Seq Chain -- ^ Parts of chains that are not validated
-  } deriving (Show, Eq)
+  } deriving (Show, Eq, Generic, Binary)
 
 lastValidMsgTime :: State
                  -> Maybe SystemTime
@@ -164,38 +166,63 @@ msgChainBtm (Chain sq st) msg ix
     
     
 
+saveCitizen :: String -> State -> IO ()
+saveCitizen str st = encodeFile str st
 
+loadCitizen :: String -> IO (Maybe State)
+loadCitizen str = do
+  e_state <- decodeFileOrFail str
+  case e_state of
+      Left err -> return Nothing
+      Right st -> return $ Just st
 
 -- | Propagates and sends messages further
-initCitizen :: Process ()
-initCitizen = do
+initCitizen :: String -> Process ()
+initCitizen fname = do
     say "Citizen: Spawned"
-    register "citizen" =<< getSelfPid
-    nsend "lookout" =<< (RequestPrevious <$> liftIO getSystemTime <*> getSelfPid)
-    loopCitizen (State (Chain SQ.empty S.empty) SQ.empty )
+    pid <- getSelfPid
+    nid <- getSelfNode
+    register "citizen" pid
+
+    m_st <- liftIO $ loadCitizen fname
+    case m_st of 
+      Nothing -> do
+        say "Citizen: Starting with new state"
+        say "Citizen: Requesting previous messages"
+        nsend "lookout" =<< (RequestPrevious <$> liftIO getSystemTime <*> getSelfPid)
+        loopCitizen fname (State (Chain SQ.empty S.empty) SQ.empty )
+      Just st -> do
+        say "Citizen: Loaded previous state"
+        say "Citizen: Requesting previous messages"
+        t_to   <- liftIO $ getSystemTime 
+        case lastValidMsgTime st of
+          Just t_from -> nsend "lookout" $ RequestBetween  t_from t_to pid
+          Nothing     -> nsend "lookout" $ RequestPrevious        t_to pid
+        loopCitizen fname st
 
 
-loopCitizen :: State -> Process ()
-loopCitizen state = do
+loopCitizen :: String -> State -> Process ()
+loopCitizen fname state = do
     receiveWait (
       [ match (\(PropagateMsg n m) -> do
           case addMsgState m state of 
             Just new_state -> do
               say (concat ["Citizen: Msg ", show2Float (msgVal m), " from ", show n, " - propagating"]) 
-              nsend "lookout" (PropagateMsg n m)      
-              loopCitizen new_state
+              nsend "lookout" (PropagateMsg n m) 
+              liftIO $ saveCitizen fname new_state
+              loopCitizen fname new_state
             Nothing        -> do
               say (concat ["Citizen: Msg ", show2Float (msgVal m), " from ", show n, " - already in"]) 
-              loopCitizen     state
+              loopCitizen fname state
           )
       , match (\(PrintMsg            ) -> do
           say "Citizen: Received a print request" 
-          loopCitizenGrace state
+          loopCitizenGrace fname state
           )
       , match (\(HiMsg nid) -> do 
           say (concat ["Citizen: Discovered by ", show nid])
           nsend "lookout" (HiMsg nid)
-          loopCitizen state
+          loopCitizen fname state
           )
       , match (\(ReconnectedMsg) -> do 
           say ("Citizen: Requesting previous messages")
@@ -204,7 +231,7 @@ loopCitizen state = do
           case lastValidMsgTime state of
             Just t_from -> nsend "lookout" $ RequestBetween  t_from t_to my_pid
             Nothing     -> nsend "lookout" $ RequestPrevious        t_to my_pid
-          loopCitizen state
+          loopCitizen fname state
           )
       , match (\(PreviousMsgs all msgs pid) -> do 
           say (concat ["Citizen: Received previous msgs from ", show pid])
@@ -217,28 +244,31 @@ loopCitizen state = do
                case lastValidMsgTime new_state of
                  Just t_from -> nsend "lookout" $ RequestBetween  t_from t_to my_pid
                  Nothing     -> nsend "lookout" $ RequestPrevious        t_to my_pid
-          loopCitizen new_state
+          liftIO $ saveCitizen fname new_state
+          loopCitizen fname new_state
           )
       ])
 
 
 -- | Entering grace period
-loopCitizenGrace :: State -> Process ()
-loopCitizenGrace state = do 
+loopCitizenGrace :: String -> State -> Process ()
+loopCitizenGrace fname state = do 
     smth <- receiveTimeout 50000 (
       [ match (\(PropagateMsg n m) -> do
           case addMsgState m state of
             Just new_state -> do
               say (concat ["Citizen: Msg ", show2Float (msgVal m), " from ", show n, " - grace period"]) 
-              loopCitizenGrace new_state
+              liftIO $ saveCitizen fname new_state
+              loopCitizenGrace fname new_state
             Nothing        -> do
               say (concat ["Citizen: Msg ", show2Float (msgVal m), " from ", show n, " - grace period, already in"]) 
-              loopCitizenGrace     state
+              loopCitizenGrace fname     state
           )
       , match (\(PreviousMsgs _ msgs pid) -> do 
           say (concat ["Citizen: Received previous msgs from ", show pid, " - grace period"])
           let new_state = foldl' (\s m -> maybe s id (addMsgState m s)) state msgs 
-          loopCitizen new_state
+          liftIO $ saveCitizen fname new_state
+          loopCitizenGrace fname new_state
           )
       ]) 
     case smth of 

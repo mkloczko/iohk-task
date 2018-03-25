@@ -1,6 +1,7 @@
 {-#LANGUAGE RecordWildCards#-}
 {-#LANGUAGE TupleSections#-}
-
+{-#LANGUAGE DeriveGeneric #-}
+{-#LANGUAGE DeriveAnyClass #-}
 module Process.RNG where
 
 import Control.Monad
@@ -21,6 +22,14 @@ import System.Random.MWC
 
 import Msg
 import Scratchpad(show2Float)
+
+-- | Save state
+saveRNG :: String -> GenIO -> Msg -> IO ()
+saveRNG fname gen msg = return () 
+
+-- | Load state, if exists
+loadRNG :: String -> IO (Maybe (GenIO, Msg))
+loadRNG str = return Nothing
 
 -- | Process functionality related to generating new messages
 initRNG :: GenIO -> Word ->  Process ()

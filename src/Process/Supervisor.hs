@@ -3,7 +3,10 @@ module Process.Supervisor where
 import Control.Distributed.Process
 import Control.Distributed.Process.Backend.SimpleLocalnet
 import Control.Concurrent
+import Crypto.Hash 
 
+import Data.ByteString.Char8 (pack, unpack)
+import Data.ByteArray (convert)
 import Data.Time.Clock.System
 import Data.Maybe
 
@@ -12,6 +15,9 @@ import System.Random.MWC
 import Process.Citizen (initCitizen)
 import Process.Lookout (initLookout)
 import Process.RNG (initRNG)
+
+import System.Directory
+
 
 import Msg
 import Scratchpad (diffSysTime)
@@ -41,6 +47,7 @@ data SupervisorKit = SupervisorKit
   { rng_interval :: Word
   , m_gen        :: Maybe GenIO
   , backend_kit  :: Backend
+  , fname_cit    :: String
   } 
 
 
@@ -53,11 +60,17 @@ initSupervisor :: Double -- ^ Messaging time
                -> Backend
                -> Process ()
 initSupervisor msg_dt grace_dt rng_inter m_gen_io backend = do
-    let kit = SupervisorKit rng_inter m_gen_io backend
+    nid <- getSelfNode
+    let fname_citizen = (unpack.convert) $ ((hash.pack) $ concat [show nid, ":citizen"] :: Digest SHA256)
+        kit           = SupervisorKit rng_inter m_gen_io backend fname_citizen
     say "Supervisor: Spawned"
     pid <- getSelfPid
+
+    --Touch a file
+    liftIO $ writeFile fname_citizen ""
+    
     lookout_pidref <- spawnLocalSupervised (initLookout backend)
-    citizen_pidref <- spawnLocalSupervised  initCitizen
+    citizen_pidref <- spawnLocalSupervised $ initCitizen fname_citizen
     m_rng_pidref   <- case m_gen_io of
         Just gen_io -> Just <$> spawnLocalSupervised (initRNG gen_io rng_inter)
         Nothing     -> return Nothing
@@ -79,6 +92,7 @@ initSupervisor msg_dt grace_dt rng_inter m_gen_io backend = do
            unmonitor (snd citizen_pidref) 
            kill (fst citizen_pidref) "End of grace period" 
     liftIO $ threadDelay 250000
+    liftIO $ removeFile fname_citizen
 
     
 -- | Check whether all children are working - if not, restart.
@@ -106,7 +120,7 @@ messagingPeriod kit timer_pid lookout_pidref citizen_pidref m_rng_pidref = do
           new_lookout <- spawnLocalSupervised (initLookout $ backend_kit kit)
           messagingPeriod kit timer_pid new_lookout citizen_pidref m_rng_pidref
         2 -> do
-          new_citizen <- spawnLocalSupervised initCitizen
+          new_citizen <- spawnLocalSupervised (initCitizen $ fname_cit kit)
           messagingPeriod kit timer_pid lookout_pidref new_citizen m_rng_pidref
         3 -> do
           new_rng <- case m_gen kit of 
@@ -131,6 +145,6 @@ gracePeriod kit timer_pid citizen_pidref = do
         0 -> return False
         1 -> return True
         2 -> do
-          new_citizen <- spawnLocalSupervised initCitizen
+          new_citizen <- spawnLocalSupervised (initCitizen $ fname_cit kit)
           gracePeriod kit timer_pid new_citizen
         _ -> gracePeriod kit timer_pid citizen_pidref
