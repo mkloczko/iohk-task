@@ -15,6 +15,3 @@ $ cabal run    -- --help
 The configuration file is found at: ```config/nodes.txt```
 The file can also be specified with command line option.
 
-# TODO
-
-Reduce the number of messages sent - try to reduce the number of edges between nodes.
